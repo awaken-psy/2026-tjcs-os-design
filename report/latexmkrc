@@ -1,0 +1,8 @@
+# latexmk 配置: 使用 xelatex 编译中文报告
+# 用法: 在 report/ 目录下执行  latexmk   (自动读取本文件)
+$pdf_mode = 5;            # 5 = xelatex
+$xdvipdfmx = 'xdvipdfmx %O -o %D %S';
+$xelatex = 'xelatex -interaction=nonstopmode -synctex=1 %O %S';
+$bibtex_use = 0;          # 当前用 thebibliography 手写, 不跑 bibtex
+@default_files = ('main.tex');
+$clean_ext = 'synctex.gz fls fdb_latexmk out bbl';

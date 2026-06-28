@@ -1,0 +1,145 @@
+% !TEX program = xelatex
+% =====================================================================
+%  操作系统课程设计报告 —— UNIX V6++ 离散化内存管理
+%  参照学长报告(白佳煜, 2352733)结构搭建的 LaTeX 全文架构
+%  编译: latexmk -xelatex main.tex   (或 xelatex 连续两次)
+% =====================================================================
+\documentclass[a4paper,11pt,openany,UTF8]{ctexbook}
+
+% ---------- 页面与版式 ----------
+\usepackage[a4paper,top=2.5cm,bottom=2.5cm,left=2.5cm,right=2.5cm]{geometry}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+
+% ---------- 中文与字体 ----------
+% ctexbook 已处理中文; xelatex 下默认使用系统字体, 可按需在下方覆盖
+% \setCJKmainfont{SimSun}   % 如需指定正文字体, 取消注释
+
+% ---------- 排版增强 ----------
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{longtable}
+\usepackage{multirow}
+\usepackage{enumitem}
+\usepackage{tabularx}
+\usepackage{amsmath,amssymb}
+
+% ---------- 代码清单 ----------
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{chngcntr}
+
+% ---------- 超链接 ----------
+\usepackage[colorlinks=true,linkcolor=black,citecolor=blue,urlcolor=blue]{hyperref}
+
+% =====================================================================
+%  封面信息 (请按实际情况修改)
+% =====================================================================
+\newcommand{\ReportTitle}{操作系统课程设计报告}
+\newcommand{\ReportSubtitle}{UNIX V6++ 离散化内存管理}
+\newcommand{\StudentName}{\textbf{韦畅}}        % TODO: 姓名
+\newcommand{\StudentId}{\textbf{2352628}}          % TODO: 学号
+\newcommand{\Department}{计算机科学与技术学院}
+\newcommand{\Major}{计算机科学与技术}
+\newcommand{\Advisor}{方钰}
+\newcommand{\ReportDate}{2026 年 \the\month\ 月}
+
+% =====================================================================
+%  代码清单样式 (学长报告使用 Listing X.Y 风格)
+% =====================================================================
+\definecolor{codegray}{rgb}{0.5,0.5,0.5}
+\definecolor{codeblue}{rgb}{0.0,0.0,0.6}
+\definecolor{codegreen}{rgb}{0.0,0.5,0.0}
+\definecolor{codebg}{rgb}{0.97,0.97,0.97}
+
+\lstset{
+    basicstyle=\ttfamily\small,
+    keywordstyle=\color{codeblue}\bfseries,
+    commentstyle=\color{codegray}\itshape,
+    stringstyle=\color{codegreen},
+    numberstyle=\tiny\color{codegray},
+    numbers=left,
+    numbersep=8pt,
+    frame=single,
+    framesep=5pt,
+    rulecolor=\color{codegray!50},
+    backgroundcolor=\color{codebg},
+    breaklines=true,
+    breakatwhitespace=true,
+    showstringspaces=false,
+    tabsize=4,
+    captionpos=b,
+    abovecaptionskip=6pt,
+    xleftmargin=12pt,
+    language=C++,
+}
+% 代码清单按章编号, 显示为 "代码清单 3.1"
+\renewcommand{\lstlistingname}{代码清单}
+\AtBeginDocument{\counterwithin{lstlisting}{chapter}}
+
+% 图表按章编号 (图 3-1 / 表 4-1), 用连字符更贴近学长风格
+\renewcommand{\thefigure}{\arabic{chapter}-\arabic{figure}}
+\renewcommand{\thetable}{\arabic{chapter}-\arabic{table}}
+
+% 运行截图占位框: 正文成稿前用占位标记截图位置, 运行后替换为 \includegraphics
+\newcommand{\shotbox}[1]{%
+  \begin{center}%
+  \fcolorbox{gray!60}{gray!10}{%
+    \parbox[c][3.6cm][c]{0.82\textwidth}{\centering\itshape
+      【运行截图占位】\\[2pt]\normalfont #1\\[2pt]\itshape (运行后替换为实际截图)}}%
+  \end{center}}
+
+% =====================================================================
+%  页眉页脚
+% =====================================================================
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small 操作系统课程设计报告}
+\fancyhead[R]{\small UNIX V6++ 离散化内存管理}
+\fancyfoot[C]{\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+% 章节标题样式
+\titleformat{\chapter}[block]{\huge\bfseries\centering}{第\zhnum{chapter}章}{1em}{}
+\titlespacing*{\chapter}{0pt}{-20pt}{30pt}
+
+% 消除 \cleardoublepage 产生的空白页 (封面后/参考文献后等); 让其等价于 \clearpage
+\let\cleardoublepage\clearpage
+
+% =====================================================================
+%  文档开始
+% =====================================================================
+\begin{document}
+
+% ---------- 封面 ----------
+\input{chapters/cover}
+
+% ---------- 目录 ----------
+\frontmatter
+\cleardoublepage
+\phantomsection
+\addcontentsline{toc}{chapter}{目录}
+\tableofcontents
+
+% ---------- 正文 ----------
+\mainmatter
+\input{chapters/ch01_intro}        % 第一章  绪论
+\input{chapters/ch02_requirement}  % 第二章  需求分析与总体思路
+\input{chapters/ch03_pagetable}    % 第三章  页表系统改造
+\input{chapters/ch04_allocator}    % 第四章  物理页框分配方式改造
+\input{chapters/ch05_image}        % 第五章  离散化进程映像管理
+\input{chapters/ch06_env}          % 第六章  本地运行环境与工程适配
+\input{chapters/ch07_debug}        % 第七章  关键问题与调试过程
+\input{chapters/ch08_test}         % 第八章  系统测试与验证
+\input{chapters/ch09_eval}         % 第九章  设计评价与不足
+\input{chapters/ch10_conclusion}   % 第十章  总结与体会
+
+% ---------- 参考文献 ----------
+\backmatter
+\input{chapters/references}
+
+\end{document}

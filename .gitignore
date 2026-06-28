@@ -1,0 +1,24 @@
+# 交付压缩包(不入库)
+2352628-*.zip
+2352628-*/
+
+# V6++ 框架构建产物与拉取的工具源码(可由 init.sh / make 重建)
+unix-v6pp-tongji-main/build/
+unix-v6pp-tongji-main/target/
+unix-v6pp-tongji-main/tools/unix-v6pp-filesystem-editor/
+
+# LaTeX 编译辅助(保留 main.pdf 作为交付物)
+report/*.aux
+report/*.log
+report/*.toc
+report/*.out
+report/*.fls
+report/*.fdb_latexmk
+report/*.synctex.gz
+report/*.bbl
+report/*.blg
+
+# 通用临时/系统文件
+*~
+.DS_Store
+Thumbs.db

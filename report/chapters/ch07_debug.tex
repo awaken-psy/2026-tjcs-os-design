@@ -1,0 +1,103 @@
+% =====================================================================
+%  第七章  关键问题与调试过程
+% =====================================================================
+\chapter{关键问题与调试过程}
+
+本章梳理本次改造过程中几处需要重点关注的问题。这些问题要么直接源于离散化改造
+引入的新机制，要么是内核类项目中常见的工程陷阱；对每个问题，按"现象\,/\,根因\,/\,
+处理与注意点"的方式加以分析。需要说明的是，其中部分问题属于基于源码审查与机制
+推理识别出的\emph{典型风险点}及其解决方向，旨在为后续实际运行调试提供路径指引。
+
+\section{/dev/tty1 打开失败与文件系统布局问题}
+\textbf{现象。}内核启动、初始化完成后，shell 试图打开控制终端 \texttt{/dev/tty1}
+或加载用户程序时失败，表现为无法进入交互或提示找不到文件。
+
+\textbf{根因。}这类问题通常与文件系统镜像布局有关：当 \texttt{c.img} 中的文件系统区
+与内核预期不一致时——例如设备节点 \texttt{/dev/tty1} 未正确注册、用户程序的 inode
+位置与内核查找路径不匹配，或镜像中文件系统区起始位置偏离了 bootloader 加载内核后
+的预期偏移——shell 便无法打开终端或定位程序。其根源往往不在内存管理本身，而在第六
+章所述的镜像构建环节：若使用了与内核版本不匹配的镜像，或文件系统构建工具写入布局
+有误，就会出现此类现象。
+
+\textbf{处理与注意点。}解决的关键是保证镜像与内核配套：使用与当前内核一致的文件
+系统构建工具重新生成 \texttt{c.img}，并核对设备注册顺序与程序 inode 布局。调试时可
+借助内核的 \texttt{Diagnose::Write} 日志输出，确认 \texttt{NameI} 路径解析与设备
+打开的具体失败位置。
+
+\section{ls 后 COW 判断范围不足问题}
+\textbf{现象。}执行 \texttt{ls} 等（会 \texttt{fork} 后 \texttt{exec}）的用户程序后，
+系统出现异常，追踪与 COW 的判断范围有关。
+
+\textbf{根因。}此问题的根因可直接定位到第 5.3 节 \texttt{PageFault} 中的
+\texttt{isRW} 判断（\texttt{interrupt/Exception.cpp}）：
+
+\begin{lstlisting}[caption={COW 触发条件中的地址范围判断},label={lst:isrw}]
+bool isRW = (cr2 >= md.m_DataStartAddress && cr2 < md.m_DataStartAddress + md.m_DataSize)
+         || (cr2 >= USER_SPACE_SIZE - md.m_StackSize && cr2 < USER_SPACE_SIZE);
+\end{lstlisting}
+
+COW 仅当缺页地址落在\emph{数据段}或\emph{栈段}范围内时才触发。若该范围判断存在边界
+遗漏——例如栈段上界未取到 \texttt{USER\_SPACE\_SIZE}、或数据段长度计算未向上取整到
+页边界——那么本应走 COW 分离的共享页写入会落入非法访问分支，被误判为越界而产生
+\texttt{SIGSEGV}。\texttt{ls} 这类程序的执行会触发较多 fork/exec 与数据页写入，因而
+容易暴露这一范围缺陷。
+
+\textbf{处理与注意点。}解决方法是确保 \texttt{isRW} 完整覆盖数据段
+\texttt{[m\_DataStartAddress, m\_DataStartAddress + m\_DataSize)} 与栈段
+\texttt{[USER\_SPACE\_SIZE - m\_StackSize, USER\_SPACE\_SIZE)}，并对段大小按页向上
+取整。这一修正同时也保障了第 5.6 节 wait 写 status 时的 COW 路径能够正确触发。
+
+\section{/bin/test 按 CTRL+C 后 kernel page fault 问题}
+\textbf{现象。}用户程序（如 \texttt{/bin/test}）运行过程中按下 \texttt{CTRL+C} 触发
+中断信号，系统进入内核态处理时发生 kernel page fault。
+
+\textbf{根因。}信号处理涉及从内核态向用户态递交信号、再从用户态信号处理函数返回的
+完整往返，其中栈帧的保存与恢复尤为敏感。在离散化模型下，此类问题可能源于几条相互
+关联的路径：其一，fork 时若某个共享页的引用计数漏加，后续 COW 分离会得到错误的页
+内容，影响信号栈；其二，\texttt{text} 段释放范围错误，可能在仍有进程使用代码页时
+提前回收，导致返回时取指失败；其三，信号返回时恢复了错误的栈帧，使返回地址或栈指针
+指向未映射区域。这三类根因的共同特征是：故障的"最后一行"（kernel page fault）距离
+真正的错误引入点（fork 计数、text 释放、信号栈帧）往往很远。
+
+\textbf{处理与注意点。}由于现象同源而根因各异，解决时必须沿"fork $\to$ 信号递交
+$\to$ 信号返回"的完整执行路径逐步核对，而非只看 fault 发生处。具体可借助
+\texttt{kernel.sym} 符号表与 QEMU 的 \texttt{-s -S} gdb 联调，在信号相关入口设断点，
+检查引用计数与栈帧的一致性。
+
+\section{exec 参数丢失问题}
+\textbf{现象。}经 \texttt{exec} 加载的用户程序，其拿到的命令行参数
+\texttt{argc}/\texttt{argv} 不正确或部分丢失。
+
+\textbf{根因。}如第 5.4 节所述，\texttt{Exec} 通过\emph{借用} 0\# 用户页表的前几项
+来临时映射新栈物理页框，以便内核在低地址写入参数。这一过程对时序敏感：若在参数尚未
+写完时就恢复了 0\# 页表项，或在 \texttt{MapToPageTable}（刷新 \texttt{CR3}）的时机
+上出错，写入就会落到错误的映射上，导致参数丢失或错位。问题集中在
+\texttt{tempEntrys[i]} 的借用与恢复顺序（\texttt{ProcessManager.cpp :: Exec}）。
+
+\textbf{处理与注意点。}正确的顺序是：先临时挂载 0\# 页表项并刷新 \texttt{CR3} $\to$
+完成全部参数写入 $\to$ 再恢复 0\# 页表项并再次刷新。任何在写入中途的刷新或提前恢复
+都会破坏参数。调试时可让目标程序打印 \texttt{argc} 与各 \texttt{argv[i]}，对照 shell
+传入的命令行，定位是参数完全丢失还是错位。
+
+\section{陈旧目标文件与调试方法总结}
+\textbf{现象。}修改了源码后系统行为却未变化，疑似改动"没有生效"。
+
+\textbf{根因。}这是内核类项目最常见的工程陷阱：增量构建未能重新编译受影响的模块，
+陈旧的 \texttt{.o} 文件被再次链接进内核；中文路径、构建缓存（如 \texttt{CMake} 残留）
+等也会干扰依赖判断。其结果就是"改了等于没改"。
+
+\textbf{处理与注意点。}对策是改动后进行完整的 clean 重建（清理全部 \texttt{.o} 与
+中间产物），并规避中文路径。在此基础上，本设计采用如下调试方法组合：
+\begin{itemize}
+  \item \textbf{日志输出}：在关键路径插入 \texttt{Diagnose::Write}，打印 \texttt{CR2}、
+        引用计数、页表项等运行时状态；
+  \item \textbf{符号调试}：用 \texttt{nm} 生成的 \texttt{kernel.sym} 把地址映射回
+        函数名，定位 fault 发生在哪个函数；
+  \item \textbf{源码联调}：QEMU 以 \texttt{-s -S} 启动后，gdb 远程连接，设断点、单步、
+        查看寄存器与内存；
+  \item \textbf{二分定位}：对难以定位的问题，通过分段注释或回退改动二分缩小范围。
+\end{itemize}
+
+实践表明，对于底层系统项目，稳定的构建与运行环境本身就是调试能力的一部分——许多
+看似"内核崩溃"的现象，根因其实在于中文路径、陈旧缓存、Makefile 命令差异、bootloader
+扇区数不足或镜像布局不一致等工程问题。先排除这些干扰，才能让真正的算法缺陷浮出水面。

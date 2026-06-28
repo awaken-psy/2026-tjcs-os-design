@@ -1,0 +1,32 @@
+% =====================================================================
+%  参考文献 —— 用 enumerate 手动排版, 避免该bibliography 的跳页问题
+% =====================================================================
+\clearpage
+\phantomsection
+\addcontentsline{toc}{chapter}{参考文献}
+\begin{center}
+{\huge\bfseries 参考文献}\par
+\end{center}
+\vspace{1.2em}
+
+\begin{enumerate}[label={[\arabic*]},leftmargin=2.6em,itemsep=4pt]
+
+  \item Lions J. \emph{Commentary on UNIX 6th Edition Source Code}[M].
+        上海: 同济大学计算机系讲义.
+
+  \item 方钰. \emph{UNIX V6++ 内核源代码与课程设计讲义}[Z].
+        同济大学计算机科学与技术学院, 2026.
+
+  \item Intel Corporation. \emph{Intel 64 and IA-32 Architectures Software
+        Developer's Manual, Volume 3: System Programming Guide}[Z].
+
+  \item 李治军, 刘宏伟. \emph{操作系统原理、实现与实践}[M].
+        北京: 高等教育出版社.
+
+  \item The Bochs Project. \emph{Bochs IA-32 Emulator Project}[EB/OL].
+        \url{http://bochs.sourceforge.net/}.
+
+  \item Bellard F. \emph{QEMU, a Fast and Portable Dynamic Translator}[EB/OL].
+        \url{https://www.qemu.org/}.
+
+\end{enumerate}

@@ -1,0 +1,110 @@
+% =====================================================================
+%  第六章  本地运行环境与工程适配
+% =====================================================================
+\chapter{本地运行环境与工程适配}
+
+\section{Windows/MSYS2/MinGW 构建环境}
+UNIX V6++ 原生面向 Windows 平台，其工具链由 MSYS2/MinGW 提供。具体包括：汇编器
+NASM 用于引导与第二阶段加载代码；编译器 g++（内核）/ gcc（用户程序）以
+freestanding 方式工作，关闭标准库与运行时（\texttt{-nostdlib -nostartfiles
+-fno-builtin -fno-rtti -fno-exceptions -nostdinc}）；链接器 ld 按自定义脚本
+\texttt{Link.ld} 链接，输出格式为 \texttt{pei-i386}；\texttt{objcopy}/
+\texttt{objdump}/\texttt{nm} 用于把可链接映像转为裸二进制并生成符号表与反汇编。
+运行环境则使用 Bochs 或 QEMU（\texttt{qemu-system-i386}）加载磁盘镜像验证。
+
+本设计的本地验证在 Linux 环境下进行，其工具链与 Windows 版高度等价：系统自带的
+\texttt{gcc/g++} 经 \texttt{-m32} 即可生成 32 位代码，binutils 的 \texttt{ld} 同样
+支持 \texttt{pei-i386} 输出格式，\texttt{objcopy}/\texttt{objdump}/\texttt{nm} 均已
+就绪；仅需额外安装 \texttt{nasm}（汇编）与 \texttt{qemu-system-i386}（运行）。
+内核链接得到的 \texttt{kernel.exe} 与在 Windows 下产物一致，可直接进入后续镜像
+构建流程。
+
+\section{Makefile 与构建流程适配}
+工程的构建由分层的 Makefile 组织。顶层 \texttt{Makefile} 通过 \texttt{include
+Makefile.inc} 定义公共变量与规则，再以 \texttt{DIRS} 列表递归进入各子目录
+（\texttt{boot}、\texttt{kernel}、\texttt{mm}、\texttt{proc}、\texttt{interrupt}、
+\texttt{fs}、\texttt{dev} 等）分别编译，最终在 \texttt{build} 目标中完成链接与转换：
+
+\begin{lstlisting}[caption={内核构建的核心步骤},label={lst:build}]
+# 对应源码 Makefile (build 目标, 改写为跨平台等价命令)
+$(LD) $(LDFLAGS) $(OBJS) -o kernel.exe        # 链接为 PE 可执行
+objcopy -O binary kernel.exe kernel.bin         # 转为裸二进制
+nm      kernel.exe > kernel.sym                 # 符号表 (调试用)
+objdump -d     kernel.exe > kernel.asm          # 反汇编 (调试用)
+\end{lstlisting}
+
+链接脚本 \texttt{Link.ld} 规定了内核的内存布局（见代码清单~\ref{lst:linkld}）：
+入口符号为 \texttt{greatstart}；\texttt{.text} 段定位于 \texttt{0xc0100000}（即内核
+空间 \texttt{0xC0000000} 偏上 1MB 处），其后依次为 \texttt{.data}（含构造/析构表）与
+\texttt{.bss}，各段按 4KB 对齐。这一布局与第三章中核心页表把 \texttt{0xC0000000} 起
+4MB 恒等映射到物理低址的设计相吻合——内核被 bootloader 加载到物理 1MB 处后，即可
+通过该恒等映射在 \texttt{0xc0100000} 虚地址上正确执行。
+
+\begin{lstlisting}[caption={Link.ld 的关键约束},label={lst:linkld}]
+/* 对应源码 Link.ld */
+OUTPUT_FORMAT("pei-i386")
+ENTRY(greatstart)
+SECTIONS {
+    .text 0xc0100000 : { *(.text) . = ALIGN(4096); }
+    .data : { /* .ctors / .dtors 构造析构表 */ *(.data) . = ALIGN(4096); }
+    .bss  : { *(.bss)  . = ALIGN(4096); }
+}
+\end{lstlisting}
+
+由于原 Makefile 大量使用 Windows 专有命令（\texttt{copy}/\texttt{del}、反斜杠路径），
+本地适配时需要将这些命令替换为跨平台等价形式（\texttt{cp}/\texttt{rm}、正斜杠路径），
+或直接在 MSYS2 环境下沿用原版。这一适配不涉及算法逻辑，但直接影响构建能否走通。
+
+\section{bootloader 与内核镜像适配}
+系统启动由 \texttt{boot.s} 完成。它是一段仅 512 字节的引导扇区，承担从 16 位实模式
+进入 32 位保护模式并加载内核的职责，其流程为：加载 GDT、开启 A20 地址线、置
+\texttt{CR0} 的 PE 位进入保护模式、远跳转到 32 位代码段；随后以 LBA28 PIO 方式从硬盘
+读取内核映像到物理地址 \texttt{0x100000}（1MB），读取的扇区数由 \texttt{KERNEL\_SIZE}
+决定；最后切换数据段、把 \texttt{esp} 或上 \texttt{0xc0000000} 转入内核虚地址视角，
+远跳转到 \texttt{0xc0100000} 开始执行内核入口。关键代码见清单~\ref{lst:boot}。
+
+\begin{lstlisting}[caption={boot.s 加载内核的核心逻辑},label={lst:boot}]
+; 对应源码 boot/boot.s (32 位段节选)
+mov  ecx, KERNEL_SIZE        ; 要加载的扇区数
+mov  eax, 1                  ; LBA 起始扇区 (#0 为引导扇区, #1 起为 kernel)
+mov  ebx, 0x100000           ; 目标物理地址 1MB
+_load_kernel:
+    push eax; push ebx
+    call _load_sector         ; LBA28 PIO 读一个扇区到 ebx
+    add  ebx, 512
+    loop _load_kernel
+    or   esp, 0xc0000000      ; 切换到内核虚地址视角
+    jmp  0x18:0xc0100000      ; 跳入内核入口
+\end{lstlisting}
+
+这里有两点与离散化改造相关。其一，\texttt{KERNEL\_SIZE} 必须与 \texttt{kernel.bin}
+的实际大小匹配，否则会加载不完整或越界，这一点在内核体积变化后需要同步调整。
+其二，bootloader 阶段尚未启用页表，内核被加载到物理 1MB；进入内核后才由
+\texttt{Machine} 初始化页目录与页表，建立 \texttt{0xC0000000} 起的恒等映射，从而
+把"物理 1MB"与"虚地址 \texttt{0xc0100000}"统一为同一段内核代码——这是第三章核心页表
+恒等映射在启动流程上的落脚点。
+
+\section{磁盘 I/O 与文件系统镜像布局}
+内核启动后，用户程序（shell 及 \texttt{ls}/\texttt{cat}/\texttt{fork} 等）并不在
+内核映像中，而是存放在磁盘镜像的文件系统区，由内核通过 ATA 驱动读取、经
+\texttt{PEParser} 解析加载。因此，磁盘镜像的布局直接关系到系统能否进入 shell。
+
+镜像采用 LBA 线性布局：0 号扇区为 \texttt{boot.bin}（512 字节引导扇区），1 号扇区起
+为 \texttt{kernel.bin}，其后为 UNIX V6++ 私有格式的文件系统区，其中打包了 shell 与
+各用户程序。文件系统区的构建依赖一组专用工具（\texttt{build.exe}、
+\texttt{filescanner.exe}、\texttt{fsedit.exe}），它们负责把编译好的用户程序写入文件
+系统镜像。
+
+值得注意的是，这组文件系统构建工具是 Windows 可执行文件，且在本工程随源码分发时
+并不总是齐备。本地适配时这是最主要的工程障碍：若工具缺失，则无法由源码重新生成含
+完整文件系统的 \texttt{c.img}，只能依赖预先制作好的镜像。本设计在验证阶段优先使用
+既有的可运行镜像，并在 Makefile 已提供的 \texttt{make qemu} 目标基础上启动验证；
+镜像构建工具的跨平台替代（如基于 \texttt{mtools} 或自研 V6++ fs 写入器）则作为后续
+工程改进的方向（见第九章）。
+
+\section{本章小结}
+本章梳理了让改造后的内核"能构建、能引导、能进 shell"所需的工程适配：在 Windows
+MSYS2/MinGW 或等价的 Linux 工具链下完成编译链接；按 \texttt{Link.ld} 布局生成内核
+映像；由 \texttt{boot.s} 引导加载；通过磁盘镜像的文件系统区提供用户程序。这些内容
+虽不属于内存管理算法本身，却是验证页表、位示图、COW 等改造确实生效的前提——一个
+无法启动的内核无从谈验证。
